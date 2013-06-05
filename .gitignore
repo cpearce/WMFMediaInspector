@@ -1,0 +1,11 @@
+Debug/
+Release/
+ipch/
+Thumbs.db
+*.vcxproj.filters
+*.vcxproj.user
+*.vcxproj.aps
+*.opensdf
+*.sdf
+*.v11.suo
+*.aps
