@@ -475,6 +475,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
   if (argc < 2) {
     printf("Please supply a file path to inspect\n");
+    printf("Usage: WMFMediaInspector [-a] [-v] <media file names>\n");
     printf("Optional args: -a and -v for audio/video only.\n");
     return -1;
   }
