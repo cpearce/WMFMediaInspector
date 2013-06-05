@@ -466,6 +466,54 @@ IsAACAudio(IMFMediaType* aType)
   return subType == MFAudioFormat_AAC;
 }
 
+// Returns:
+//  S_OK - audio sample/channel rate doesn't change after the first sample decode.
+//  S_FALSE - audio sample/channel rate changes after the first sample decode.
+//  Error - some other failure...
+HRESULT
+VerifyHEAAC(IMFSourceReader* aReader, DWORD aStreamIndex)
+{
+  HRESULT hr;
+  CComPtr<IMFMediaType> outputType;
+  hr = MFCreateMediaType(&outputType);
+  ENSURE_SUCCESS(hr, hr);
+
+  hr = outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+  ENSURE_SUCCESS(hr, hr);
+
+  hr = outputType->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+  ENSURE_SUCCESS(hr, hr);
+        
+  hr = aReader->SetCurrentMediaType(aStreamIndex, nullptr, outputType);
+  ENSURE_SUCCESS(hr, hr);
+
+  outputType = nullptr;
+  hr = aReader->GetCurrentMediaType(aStreamIndex, &outputType);
+  ENSURE_SUCCESS(hr, hr);
+
+  UINT32 audioRateBeforeRead = MFGetAttributeUINT32(outputType, MF_MT_AUDIO_SAMPLES_PER_SECOND, 0);
+  UINT32 audioChannelsBeforeRead = MFGetAttributeUINT32(outputType, MF_MT_AUDIO_NUM_CHANNELS, 0);
+
+  CComPtr<IMFSample> sample;
+  DWORD flags = 0;
+  DWORD actualStreamIndex = 0;
+  LONGLONG timestamp = 0;
+  hr = aReader->ReadSample(aStreamIndex, 0, &actualStreamIndex, &flags, &timestamp, &sample);
+  ENSURE_SUCCESS(hr, hr);
+
+  if ((flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) == MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) {
+    CComPtr<IMFMediaType> actualType;
+    hr = aReader->GetCurrentMediaType(aStreamIndex, &actualType);
+    ENSURE_SUCCESS(hr, hr);
+    UINT32 audioRateAfterRead = MFGetAttributeUINT32(actualType, MF_MT_AUDIO_SAMPLES_PER_SECOND, 0);
+    UINT32 audioChannelsAfterRead = MFGetAttributeUINT32(actualType, MF_MT_AUDIO_NUM_CHANNELS, 0);
+    if (audioRateBeforeRead != audioRateAfterRead ||
+        audioChannelsBeforeRead != audioChannelsAfterRead) {
+      return S_FALSE;
+    }
+  }
+  return S_OK;
+}
 
 int _tmain(int argc, _TCHAR* argv[])
 {
@@ -476,7 +524,8 @@ int _tmain(int argc, _TCHAR* argv[])
   if (argc < 2) {
     printf("Please supply a file path to inspect\n");
     printf("Usage: WMFMediaInspector [-a] [-v] <media file names>\n");
-    printf("Optional args: -a and -v for audio/video only.\n");
+    printf("Optional args: -a and -v for audio/video info only.\n");
+    printf("               --detect-aac-media-type-change - comments if media type changes on first sample decoded.\n");
     return -1;
   }
 
@@ -484,14 +533,19 @@ int _tmain(int argc, _TCHAR* argv[])
   // unless -v is supplied, and vice versa.
   bool logVideo = false;
   bool logAudio = false;
+  bool verifyHEAAC = false;
   for (int i=1; i<argc; i++) {
     if (wcscmp(L"-a", argv[i]) == 0) {
       logAudio = true;
     } else if (wcscmp(L"-v", argv[i]) == 0) {
       logVideo = true;
+    } else if (wcscmp(L"--detect-aac-media-type-change", argv[i]) == 0) {
+      verifyHEAAC = true;
     }
   }
-  if (!logVideo && !logAudio) {
+  if (verifyHEAAC) {
+    logVideo = logAudio = false;
+  } else if (!logVideo && !logAudio) {
     logVideo = logAudio = true;
   }
 
@@ -505,10 +559,13 @@ int _tmain(int argc, _TCHAR* argv[])
     const wchar_t* file = argv[i];
     hr = MFCreateSourceReaderFromURL(file, nullptr, &reader);
     if (FAILED(hr)) {
-      printf("Can't open reader for %S\n\n", file);
+      printf("%S ERROR: Can't open IMFSourceReader for file.\n", file);
       continue;
     }
-    printf("%S\n", file);
+    if (!verifyHEAAC) {
+      printf("=========================================\n");
+      printf("%S\n", file);
+    }
 
     // For each stream...
     DWORD loopnum = 0;
@@ -522,11 +579,30 @@ int _tmain(int argc, _TCHAR* argv[])
       if (IsVideoType(type) && logVideo) {
         printf("Video stream %d\n", streamIndex);
         LogMediaType(type);
-      } else if (IsAudioType(type) && logAudio) {
-        printf("Audio stream %d:\n", streamIndex);
-        LogMediaType(type);
+        printf("\n");
+      } else if (IsAudioType(type)) {
+        if (logAudio) {
+          printf("Audio stream %d:\n", streamIndex);
+          LogMediaType(type);
+          printf("\n");
+        }
+        if (verifyHEAAC) {
+          hr = VerifyHEAAC(reader, streamIndex);
+          const wchar_t* result;
+          switch (hr) {
+            case S_OK:
+              result = L"OK";
+              break;
+            case S_FALSE:
+              result = L"FAILED: Media type changes after first sample decode!";
+              break;
+            default:
+              result = L"Decode error";
+              break;
+          }
+          printf("%S %S\n", file, result);
+        }
       }
-      printf("\n");
     }
   }
 
