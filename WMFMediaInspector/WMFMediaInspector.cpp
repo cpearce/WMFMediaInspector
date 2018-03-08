@@ -237,7 +237,7 @@ void DBGMSG(PCWSTR format, ...)
     va_list args;
     va_start(args, format);
 
-    WCHAR msg[MAX_PATH];
+    WCHAR msg[10*MAX_PATH];
 
     if (SUCCEEDED(StringCbVPrintf(msg, sizeof(msg), format, args)))
     {
